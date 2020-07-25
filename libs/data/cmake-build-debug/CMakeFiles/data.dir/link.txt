@@ -1,0 +1,1 @@
+/usr/bin/c++  -g   CMakeFiles/data.dir/main.cpp.o CMakeFiles/data.dir/Item.cpp.o  -o data 

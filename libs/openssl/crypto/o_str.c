@@ -1,116 +1,302 @@
-/* crypto/o_str.c */
 /*
- * Written by Richard Levitte (richard@levitte.org) for the OpenSSL project
- * 2003.
- */
-/* ====================================================================
- * Copyright (c) 2003 The OpenSSL Project.  All rights reserved.
+ * Copyright 2003-2017 The OpenSSL Project Authors. All Rights Reserved.
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *
- * 3. All advertising materials mentioning features or use of this
- *    software must display the following acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit. (http://www.openssl.org/)"
- *
- * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
- *    endorse or promote products derived from this software without
- *    prior written permission. For written permission, please contact
- *    openssl-core@openssl.org.
- *
- * 5. Products derived from this software may not be called "OpenSSL"
- *    nor may "OpenSSL" appear in their names without prior written
- *    permission of the OpenSSL Project.
- *
- * 6. Redistributions of any form whatsoever must retain the following
- *    acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit (http://www.openssl.org/)"
- *
- * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
- * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
- * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- * ====================================================================
- *
- * This product includes cryptographic software written by Eric Young
- * (eay@cryptsoft.com).  This product includes software written by Tim
- * Hudson (tjh@cryptsoft.com).
- *
+ * Licensed under the Apache License 2.0 (the "License").  You may not use
+ * this file except in compliance with the License.  You can obtain a copy
+ * in the file LICENSE in the source distribution or at
+ * https://www.openssl.org/source/license.html
  */
 
-#include <ctype.h>
-#include <e_os.h>
-#include "o_str.h"
+#include "e_os.h"
+#include <limits.h>
+#include <openssl/crypto.h>
+#include "internal/cryptlib.h"
 
-#if !defined(OPENSSL_IMPLEMENTS_strncasecmp) && \
-    !defined(OPENSSL_SYSNAME_WIN32) && !defined(OPENSSL_SYSNAME_WINCE) && \
-    !defined(NETWARE_CLIB)
-# include <strings.h>
-#endif
-
-int OPENSSL_strncasecmp(const char *str1, const char *str2, size_t n)
+char *CRYPTO_strdup(const char *str, const char* file, int line)
 {
-#if defined(OPENSSL_IMPLEMENTS_strncasecmp)
-    while (*str1 && *str2 && n) {
-        int res = toupper(*str1) - toupper(*str2);
-        if (res)
-            return res < 0 ? -1 : 1;
-        str1++;
-        str2++;
-        n--;
-    }
-    if (n == 0)
-        return 0;
-    if (*str1)
-        return 1;
-    if (*str2)
-        return -1;
-    return 0;
-#else
-    /*
-     * Recursion hazard warning! Whenever strncasecmp is #defined as
-     * OPENSSL_strncasecmp, OPENSSL_IMPLEMENTS_strncasecmp must be defined as
-     * well.
-     */
-    return strncasecmp(str1, str2, n);
-#endif
-}
+    char *ret;
 
-int OPENSSL_strcasecmp(const char *str1, const char *str2)
-{
-#if defined(OPENSSL_IMPLEMENTS_strncasecmp)
-    return OPENSSL_strncasecmp(str1, str2, (size_t)-1);
-#else
-    return strcasecmp(str1, str2);
-#endif
-}
-
-int OPENSSL_memcmp(const void *v1, const void *v2, size_t n)
-{
-    const unsigned char *c1 = v1, *c2 = v2;
-    int ret = 0;
-
-    while (n && (ret = *c1 - *c2) == 0)
-        n--, c1++, c2++;
-
+    if (str == NULL)
+        return NULL;
+    ret = CRYPTO_malloc(strlen(str) + 1, file, line);
+    if (ret != NULL)
+        strcpy(ret, str);
     return ret;
+}
+
+char *CRYPTO_strndup(const char *str, size_t s, const char* file, int line)
+{
+    size_t maxlen;
+    char *ret;
+
+    if (str == NULL)
+        return NULL;
+
+    maxlen = OPENSSL_strnlen(str, s);
+
+    ret = CRYPTO_malloc(maxlen + 1, file, line);
+    if (ret) {
+        memcpy(ret, str, maxlen);
+        ret[maxlen] = '\0';
+    }
+    return ret;
+}
+
+void *CRYPTO_memdup(const void *data, size_t siz, const char* file, int line)
+{
+    void *ret;
+
+    if (data == NULL || siz >= INT_MAX)
+        return NULL;
+
+    ret = CRYPTO_malloc(siz, file, line);
+    if (ret == NULL) {
+        CRYPTOerr(CRYPTO_F_CRYPTO_MEMDUP, ERR_R_MALLOC_FAILURE);
+        return NULL;
+    }
+    return memcpy(ret, data, siz);
+}
+
+size_t OPENSSL_strnlen(const char *str, size_t maxlen)
+{
+    const char *p;
+
+    for (p = str; maxlen-- != 0 && *p != '\0'; ++p) ;
+
+    return p - str;
+}
+
+size_t OPENSSL_strlcpy(char *dst, const char *src, size_t size)
+{
+    size_t l = 0;
+    for (; size > 1 && *src; size--) {
+        *dst++ = *src++;
+        l++;
+    }
+    if (size)
+        *dst = '\0';
+    return l + strlen(src);
+}
+
+size_t OPENSSL_strlcat(char *dst, const char *src, size_t size)
+{
+    size_t l = 0;
+    for (; size > 0 && *dst; size--, dst++)
+        l++;
+    return l + OPENSSL_strlcpy(dst, src, size);
+}
+
+int OPENSSL_hexchar2int(unsigned char c)
+{
+#ifdef CHARSET_EBCDIC
+    c = os_toebcdic[c];
+#endif
+
+    switch (c) {
+    case '0':
+        return 0;
+    case '1':
+        return 1;
+    case '2':
+        return 2;
+    case '3':
+        return 3;
+    case '4':
+          return 4;
+    case '5':
+          return 5;
+    case '6':
+          return 6;
+    case '7':
+          return 7;
+    case '8':
+          return 8;
+    case '9':
+          return 9;
+    case 'a': case 'A':
+          return 0x0A;
+    case 'b': case 'B':
+          return 0x0B;
+    case 'c': case 'C':
+          return 0x0C;
+    case 'd': case 'D':
+          return 0x0D;
+    case 'e': case 'E':
+          return 0x0E;
+    case 'f': case 'F':
+          return 0x0F;
+    }
+    return -1;
+}
+
+/*
+ * Give a string of hex digits convert to a buffer
+ */
+int OPENSSL_hexstr2buf_ex(unsigned char *buf, size_t buf_n, size_t *buflen,
+                          const char *str)
+{
+    unsigned char *q;
+    unsigned char ch, cl;
+    int chi, cli;
+    const unsigned char *p;
+    size_t cnt;
+
+    for (p = (const unsigned char *)str, q = buf, cnt = 0; *p; ) {
+        ch = *p++;
+        if (ch == ':')
+            continue;
+        cl = *p++;
+        if (!cl) {
+            CRYPTOerr(CRYPTO_F_OPENSSL_HEXSTR2BUF_EX,
+                      CRYPTO_R_ODD_NUMBER_OF_DIGITS);
+            return 0;
+        }
+        cli = OPENSSL_hexchar2int(cl);
+        chi = OPENSSL_hexchar2int(ch);
+        if (cli < 0 || chi < 0) {
+            CRYPTOerr(CRYPTO_F_OPENSSL_HEXSTR2BUF_EX,
+                      CRYPTO_R_ILLEGAL_HEX_DIGIT);
+            return 0;
+        }
+        cnt++;
+        if (q != NULL) {
+            if (cnt > buf_n) {
+                CRYPTOerr(CRYPTO_F_OPENSSL_HEXSTR2BUF_EX,
+                          CRYPTO_R_TOO_SMALL_BUFFER);
+                return 0;
+            }
+            *q++ = (unsigned char)((chi << 4) | cli);
+        }
+    }
+
+    if (buflen != NULL)
+        *buflen = cnt;
+    return 1;
+}
+
+unsigned char *OPENSSL_hexstr2buf(const char *str, long *buflen)
+{
+    unsigned char *buf;
+    size_t buf_n, tmp_buflen;
+
+    buf_n = strlen(str) >> 1;
+    if ((buf = OPENSSL_malloc(buf_n)) == NULL) {
+        CRYPTOerr(CRYPTO_F_OPENSSL_HEXSTR2BUF, ERR_R_MALLOC_FAILURE);
+        return NULL;
+    }
+
+    if (buflen != NULL)
+        *buflen = 0;
+    tmp_buflen = 0;
+    if (OPENSSL_hexstr2buf_ex(buf, buf_n, &tmp_buflen, str)) {
+        if (buflen != NULL)
+            *buflen = (long)tmp_buflen;
+        return buf;
+    }
+    OPENSSL_free(buf);
+    return NULL;
+}
+
+int OPENSSL_buf2hexstr_ex(char *str, size_t str_n, size_t *strlen,
+                          const unsigned char *buf, size_t buflen)
+{
+    static const char hexdig[] = "0123456789ABCDEF";
+    const unsigned char *p;
+    char *q;
+    size_t i;
+
+    if (strlen != NULL)
+        *strlen = buflen * 3;
+    if (str == NULL)
+        return 1;
+
+    if (str_n < (unsigned long)buflen * 3) {
+        CRYPTOerr(CRYPTO_F_OPENSSL_BUF2HEXSTR_EX, CRYPTO_R_TOO_SMALL_BUFFER);
+        return 0;
+    }
+
+    q = str;
+    for (i = 0, p = buf; i < buflen; i++, p++) {
+        *q++ = hexdig[(*p >> 4) & 0xf];
+        *q++ = hexdig[*p & 0xf];
+        *q++ = ':';
+    }
+    q[-1] = 0;
+#ifdef CHARSET_EBCDIC
+    ebcdic2ascii(str, str, q - str - 1);
+#endif
+    return 1;
+}
+
+/*
+ * Given a buffer of length 'len' return a OPENSSL_malloc'ed string with its
+ * hex representation @@@ (Contents of buffer are always kept in ASCII, also
+ * on EBCDIC machines)
+ */
+char *OPENSSL_buf2hexstr(const unsigned char *buf, long buflen)
+{
+    char *tmp;
+    size_t tmp_n;
+
+    if (buflen == 0)
+        return OPENSSL_zalloc(1);
+
+    tmp_n = buflen * 3;
+    if ((tmp = OPENSSL_malloc(tmp_n)) == NULL) {
+        CRYPTOerr(CRYPTO_F_OPENSSL_BUF2HEXSTR, ERR_R_MALLOC_FAILURE);
+        return NULL;
+    }
+
+    if (OPENSSL_buf2hexstr_ex(tmp, tmp_n, NULL, buf, buflen))
+        return tmp;
+    OPENSSL_free(tmp);
+    return NULL;
+}
+
+int openssl_strerror_r(int errnum, char *buf, size_t buflen)
+{
+#if defined(_MSC_VER) && _MSC_VER>=1400
+    return !strerror_s(buf, buflen, errnum);
+#elif defined(_GNU_SOURCE)
+    char *err;
+
+    /*
+     * GNU strerror_r may not actually set buf.
+     * It can return a pointer to some (immutable) static string in which case
+     * buf is left unused.
+     */
+    err = strerror_r(errnum, buf, buflen);
+    if (err == NULL || buflen == 0)
+        return 0;
+    /*
+     * If err is statically allocated, err != buf and we need to copy the data.
+     * If err points somewhere inside buf, OPENSSL_strlcpy can handle this,
+     * since src and dest are not annotated with __restrict and the function
+     * reads src byte for byte and writes to dest.
+     * If err == buf we do not have to copy anything.
+     */
+    if (err != buf)
+        OPENSSL_strlcpy(buf, err, buflen);
+    return 1;
+#elif (defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE >= 200112L) || \
+      (defined(_XOPEN_SOURCE) && _XOPEN_SOURCE >= 600)
+    /*
+     * We can use "real" strerror_r. The OpenSSL version differs in that it
+     * gives 1 on success and 0 on failure for consistency with other OpenSSL
+     * functions. Real strerror_r does it the other way around
+     */
+    return !strerror_r(errnum, buf, buflen);
+#else
+    char *err;
+
+    /* Fall back to non-thread safe strerror()...its all we can do */
+    if (buflen < 2)
+        return 0;
+    err = strerror(errnum);
+    /* Can this ever happen? */
+    if (err == NULL)
+        return 0;
+    OPENSSL_strlcpy(buf, err, buflen);
+    return 1;
+#endif
 }

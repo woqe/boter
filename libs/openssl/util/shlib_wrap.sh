@@ -1,19 +1,32 @@
 #!/bin/sh
 
+# To test this OpenSSL version's applications against another version's
+# shared libraries, simply set
+#
+#     OPENSSL_REGRESSION=/path/to/other/OpenSSL/build/tree
+if [ -n "$OPENSSL_REGRESSION" ]; then
+    shlibwrap="$OPENSSL_REGRESSION/util/shlib_wrap.sh"
+    if [ -x "$shlibwrap" ]; then
+        # We clear OPENSSL_REGRESSION to avoid a loop, should the shlib_wrap.sh
+        # we exec also support that mechanism...
+        OPENSSL_REGRESSION= exec "$shlibwrap" "$@"
+    else
+        if [ -f "$shlibwrap" ]; then
+            echo "Not permitted to run $shlibwrap" >&2
+        else
+            echo "No $shlibwrap, perhaps OPENSSL_REGRESSION isn't properly set?" >&2
+        fi
+        exit 1
+    fi
+fi
+
 [ $# -ne 0 ] || set -x		# debug mode without arguments:-)
 
 THERE="`echo $0 | sed -e 's|[^/]*$||' 2>/dev/null`.."
 [ -d "${THERE}" ] || exec "$@"	# should never happen...
 
-# Alternative to this is to parse ${THERE}/Makefile...
-LIBCRYPTOSO="${THERE}/libcrypto.so"
-if [ -f "$LIBCRYPTOSO" ]; then
-    while [ -h "$LIBCRYPTOSO" ]; do
-	LIBCRYPTOSO="${THERE}/`ls -l "$LIBCRYPTOSO" | sed -e 's|.*\-> ||'`"
-    done
-    SOSUFFIX=`echo ${LIBCRYPTOSO} | sed -e 's|.*\.so||' 2>/dev/null`
-    LIBSSLSO="${THERE}/libssl.so${SOSUFFIX}"
-fi
+LIBCRYPTOSO="${THERE}/libcrypto.so.3"
+LIBSSLSO="${THERE}/libssl.so.3"
 
 SYSNAME=`(uname -s) 2>/dev/null`;
 case "$SYSNAME" in
@@ -81,23 +94,9 @@ SunOS|IRIX*)
 	;;
 esac
 
-if [ -f "$LIBCRYPTOSO" -a -z "$preload_var" ]; then
-	# Following three lines are major excuse for isolating them into
-	# this wrapper script. Original reason for setting LD_PRELOAD
-	# was to make it possible to pass 'make test' when user linked
-	# with -rpath pointing to previous version installation. Wrapping
-	# it into a script makes it possible to do so on multi-ABI
-	# platforms.
-	case "$SYSNAME" in
-	*BSD|QNX)	LD_PRELOAD="$LIBCRYPTOSO:$LIBSSLSO" ;;	# *BSD, QNX
-	*)	LD_PRELOAD="$LIBCRYPTOSO $LIBSSLSO" ;;	# SunOS, Linux, ELF HP-UX
-	esac
-	_RLD_LIST="$LIBCRYPTOSO:$LIBSSLSO:DEFAULT"	# Tru64, o32 IRIX
-	DYLD_INSERT_LIBRARIES="$LIBCRYPTOSO:$LIBSSLSO"	# MacOS X
-	export LD_PRELOAD _RLD_LIST DYLD_INSERT_LIBRARIES
-fi
 
-cmd="$1${EXE_EXT}"
+
+cmd="$1"; [ -x "$cmd" ] || cmd="$cmd${EXE_EXT}"
 shift
 if [ $# -eq 0 ]; then
 	exec "$cmd"	# old sh, such as Tru64 4.x, fails to expand empty "$@"

@@ -1,75 +1,16 @@
-/* crypto/ec/ec2_oct.c */
-/* ====================================================================
- * Copyright 2002 Sun Microsystems, Inc. ALL RIGHTS RESERVED.
+/*
+ * Copyright 2011-2018 The OpenSSL Project Authors. All Rights Reserved.
+ * Copyright (c) 2002, Oracle and/or its affiliates. All rights reserved
  *
- * The Elliptic Curve Public-Key Crypto Library (ECC Code) included
- * herein is developed by SUN MICROSYSTEMS, INC., and is contributed
- * to the OpenSSL project.
- *
- * The ECC Code is licensed pursuant to the OpenSSL open source
- * license provided below.
- *
- * The software is originally written by Sheueling Chang Shantz and
- * Douglas Stebila of Sun Microsystems Laboratories.
- *
- */
-/* ====================================================================
- * Copyright (c) 1998-2005 The OpenSSL Project.  All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions
- * are met:
- *
- * 1. Redistributions of source code must retain the above copyright
- *    notice, this list of conditions and the following disclaimer.
- *
- * 2. Redistributions in binary form must reproduce the above copyright
- *    notice, this list of conditions and the following disclaimer in
- *    the documentation and/or other materials provided with the
- *    distribution.
- *
- * 3. All advertising materials mentioning features or use of this
- *    software must display the following acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit. (http://www.openssl.org/)"
- *
- * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
- *    endorse or promote products derived from this software without
- *    prior written permission. For written permission, please contact
- *    openssl-core@openssl.org.
- *
- * 5. Products derived from this software may not be called "OpenSSL"
- *    nor may "OpenSSL" appear in their names without prior written
- *    permission of the OpenSSL Project.
- *
- * 6. Redistributions of any form whatsoever must retain the following
- *    acknowledgment:
- *    "This product includes software developed by the OpenSSL Project
- *    for use in the OpenSSL Toolkit (http://www.openssl.org/)"
- *
- * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
- * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
- * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
- * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
- * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
- * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
- * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
- * OF THE POSSIBILITY OF SUCH DAMAGE.
- * ====================================================================
- *
- * This product includes cryptographic software written by Eric Young
- * (eay@cryptsoft.com).  This product includes software written by Tim
- * Hudson (tjh@cryptsoft.com).
- *
+ * Licensed under the Apache License 2.0 (the "License").  You may not use
+ * this file except in compliance with the License.  You can obtain a copy
+ * in the file LICENSE in the source distribution or at
+ * https://www.openssl.org/source/license.html
  */
 
 #include <openssl/err.h>
 
-#include "ec_lcl.h"
+#include "ec_local.h"
 
 #ifndef OPENSSL_NO_EC2M
 
@@ -94,9 +35,10 @@ int ec_GF2m_simple_set_compressed_coordinates(const EC_GROUP *group,
                                               const BIGNUM *x_, int y_bit,
                                               BN_CTX *ctx)
 {
-    BN_CTX *new_ctx = NULL;
     BIGNUM *tmp, *x, *y, *z;
     int ret = 0, z0;
+#ifndef FIPS_MODE
+    BN_CTX *new_ctx = NULL;
 
     /* clear error queue */
     ERR_clear_error();
@@ -106,6 +48,7 @@ int ec_GF2m_simple_set_compressed_coordinates(const EC_GROUP *group,
         if (ctx == NULL)
             return 0;
     }
+#endif
 
     y_bit = (y_bit != 0) ? 1 : 0;
 
@@ -120,18 +63,19 @@ int ec_GF2m_simple_set_compressed_coordinates(const EC_GROUP *group,
     if (!BN_GF2m_mod_arr(x, x_, group->poly))
         goto err;
     if (BN_is_zero(x)) {
-        if (!BN_GF2m_mod_sqrt_arr(y, &group->b, group->poly, ctx))
+        if (!BN_GF2m_mod_sqrt_arr(y, group->b, group->poly, ctx))
             goto err;
     } else {
         if (!group->meth->field_sqr(group, tmp, x, ctx))
             goto err;
-        if (!group->meth->field_div(group, tmp, &group->b, tmp, ctx))
+        if (!group->meth->field_div(group, tmp, group->b, tmp, ctx))
             goto err;
-        if (!BN_GF2m_add(tmp, &group->a, tmp))
+        if (!BN_GF2m_add(tmp, group->a, tmp))
             goto err;
         if (!BN_GF2m_add(tmp, x, tmp))
             goto err;
         if (!BN_GF2m_mod_solve_quad_arr(z, tmp, group->poly, ctx)) {
+#ifndef FIPS_MODE
             unsigned long err = ERR_peek_last_error();
 
             if (ERR_GET_LIB(err) == ERR_LIB_BN
@@ -140,8 +84,11 @@ int ec_GF2m_simple_set_compressed_coordinates(const EC_GROUP *group,
                 ECerr(EC_F_EC_GF2M_SIMPLE_SET_COMPRESSED_COORDINATES,
                       EC_R_INVALID_COMPRESSED_POINT);
             } else
+#endif
+            {
                 ECerr(EC_F_EC_GF2M_SIMPLE_SET_COMPRESSED_COORDINATES,
                       ERR_R_BN_LIB);
+            }
             goto err;
         }
         z0 = (BN_is_odd(z)) ? 1 : 0;
@@ -153,15 +100,16 @@ int ec_GF2m_simple_set_compressed_coordinates(const EC_GROUP *group,
         }
     }
 
-    if (!EC_POINT_set_affine_coordinates_GF2m(group, point, x, y, ctx))
+    if (!EC_POINT_set_affine_coordinates(group, point, x, y, ctx))
         goto err;
 
     ret = 1;
 
  err:
     BN_CTX_end(ctx);
-    if (new_ctx != NULL)
-        BN_CTX_free(new_ctx);
+#ifndef FIPS_MODE
+    BN_CTX_free(new_ctx);
+#endif
     return ret;
 }
 
@@ -175,10 +123,12 @@ size_t ec_GF2m_simple_point2oct(const EC_GROUP *group, const EC_POINT *point,
                                 unsigned char *buf, size_t len, BN_CTX *ctx)
 {
     size_t ret;
-    BN_CTX *new_ctx = NULL;
     int used_ctx = 0;
     BIGNUM *x, *y, *yxi;
     size_t field_len, i, skip;
+#ifndef FIPS_MODE
+    BN_CTX *new_ctx = NULL;
+#endif
 
     if ((form != POINT_CONVERSION_COMPRESSED)
         && (form != POINT_CONVERSION_UNCOMPRESSED)
@@ -212,11 +162,13 @@ size_t ec_GF2m_simple_point2oct(const EC_GROUP *group, const EC_POINT *point,
             goto err;
         }
 
+#ifndef FIPS_MODE
         if (ctx == NULL) {
             ctx = new_ctx = BN_CTX_new();
             if (ctx == NULL)
                 return 0;
         }
+#endif
 
         BN_CTX_start(ctx);
         used_ctx = 1;
@@ -226,7 +178,7 @@ size_t ec_GF2m_simple_point2oct(const EC_GROUP *group, const EC_POINT *point,
         if (yxi == NULL)
             goto err;
 
-        if (!EC_POINT_get_affine_coordinates_GF2m(group, point, x, y, ctx))
+        if (!EC_POINT_get_affine_coordinates(group, point, x, y, ctx))
             goto err;
 
         buf[0] = form;
@@ -278,15 +230,17 @@ size_t ec_GF2m_simple_point2oct(const EC_GROUP *group, const EC_POINT *point,
 
     if (used_ctx)
         BN_CTX_end(ctx);
-    if (new_ctx != NULL)
-        BN_CTX_free(new_ctx);
+#ifndef FIPS_MODE
+    BN_CTX_free(new_ctx);
+#endif
     return ret;
 
  err:
     if (used_ctx)
         BN_CTX_end(ctx);
-    if (new_ctx != NULL)
-        BN_CTX_free(new_ctx);
+#ifndef FIPS_MODE
+    BN_CTX_free(new_ctx);
+#endif
     return 0;
 }
 
@@ -299,11 +253,13 @@ int ec_GF2m_simple_oct2point(const EC_GROUP *group, EC_POINT *point,
                              BN_CTX *ctx)
 {
     point_conversion_form_t form;
-    int y_bit;
-    BN_CTX *new_ctx = NULL;
+    int y_bit, m;
     BIGNUM *x, *y, *yxi;
     size_t field_len, enc_len;
     int ret = 0;
+#ifndef FIPS_MODE
+    BN_CTX *new_ctx = NULL;
+#endif
 
     if (len == 0) {
         ECerr(EC_F_EC_GF2M_SIMPLE_OCT2POINT, EC_R_BUFFER_TOO_SMALL);
@@ -332,7 +288,8 @@ int ec_GF2m_simple_oct2point(const EC_GROUP *group, EC_POINT *point,
         return EC_POINT_set_to_infinity(group, point);
     }
 
-    field_len = (EC_GROUP_get_degree(group) + 7) / 8;
+    m = EC_GROUP_get_degree(group);
+    field_len = (m + 7) / 8;
     enc_len =
         (form ==
          POINT_CONVERSION_COMPRESSED) ? 1 + field_len : 1 + 2 * field_len;
@@ -342,11 +299,13 @@ int ec_GF2m_simple_oct2point(const EC_GROUP *group, EC_POINT *point,
         return 0;
     }
 
+#ifndef FIPS_MODE
     if (ctx == NULL) {
         ctx = new_ctx = BN_CTX_new();
         if (ctx == NULL)
             return 0;
     }
+#endif
 
     BN_CTX_start(ctx);
     x = BN_CTX_get(ctx);
@@ -357,19 +316,18 @@ int ec_GF2m_simple_oct2point(const EC_GROUP *group, EC_POINT *point,
 
     if (!BN_bin2bn(buf + 1, field_len, x))
         goto err;
-    if (BN_ucmp(x, &group->field) >= 0) {
+    if (BN_num_bits(x) > m) {
         ECerr(EC_F_EC_GF2M_SIMPLE_OCT2POINT, EC_R_INVALID_ENCODING);
         goto err;
     }
 
     if (form == POINT_CONVERSION_COMPRESSED) {
-        if (!EC_POINT_set_compressed_coordinates_GF2m
-            (group, point, x, y_bit, ctx))
+        if (!EC_POINT_set_compressed_coordinates(group, point, x, y_bit, ctx))
             goto err;
     } else {
         if (!BN_bin2bn(buf + 1 + field_len, field_len, y))
             goto err;
-        if (BN_ucmp(y, &group->field) >= 0) {
+        if (BN_num_bits(y) > m) {
             ECerr(EC_F_EC_GF2M_SIMPLE_OCT2POINT, EC_R_INVALID_ENCODING);
             goto err;
         }
@@ -382,22 +340,21 @@ int ec_GF2m_simple_oct2point(const EC_GROUP *group, EC_POINT *point,
             }
         }
 
-        if (!EC_POINT_set_affine_coordinates_GF2m(group, point, x, y, ctx))
+        /*
+         * EC_POINT_set_affine_coordinates is responsible for checking that
+         * the point is on the curve.
+         */
+        if (!EC_POINT_set_affine_coordinates(group, point, x, y, ctx))
             goto err;
-    }
-
-    /* test required by X9.62 */
-    if (EC_POINT_is_on_curve(group, point, ctx) <= 0) {
-        ECerr(EC_F_EC_GF2M_SIMPLE_OCT2POINT, EC_R_POINT_IS_NOT_ON_CURVE);
-        goto err;
     }
 
     ret = 1;
 
  err:
     BN_CTX_end(ctx);
-    if (new_ctx != NULL)
-        BN_CTX_free(new_ctx);
+#ifndef FIPS_MODE
+    BN_CTX_free(new_ctx);
+#endif
     return ret;
 }
 #endif
